@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Return-Fraud &amp; Wardrobing Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead__id">
+    <span class="tag">CASE&nbsp;SYSTEM</span>
+    <h1>Return-Fraud &amp; Wardrobing Detector</h1>
+    <p class="subhead">{{ n_customers }} customer accounts screened &middot; {{ n_flagged }} flagged High/Medium risk &middot; ranked below by risk score.</p>
+  </div>
+  <div class="masthead__legend">
+    <div class="legend-row"><span class="dot dot--high"></span>High risk &ge; 0.75</div>
+    <div class="legend-row"><span class="dot dot--medium"></span>Medium risk &ge; 0.50</div>
+    <div class="legend-row"><span class="dot dot--low"></span>Low risk &lt; 0.50</div>
+  </div>
+</header>
+
+<section class="explainer">
+  <h2>How to read this page</h2>
+  <div class="explainer__grid">
+    <div>
+      <h3>What's a "cluster"?</h3>
+      <p>Customers are grouped into clusters using community detection on a graph of who shares an address or payment method with whom. Most clusters have just 1 customer (no shared connections found); a cluster with several accounts means those accounts are structurally linked, which is a stronger fraud signal than any one account's behavior alone.</p>
+    </div>
+    <div>
+      <h3>What's the risk score?</h3>
+      <p>A 0&ndash;1 score combining (a) how unusual each customer's return behavior is, scored by an Isolation Forest anomaly model, and (b) whether they belong to a larger, tightly-connected cluster. Higher = more suspicious.</p>
+    </div>
+    <div>
+      <h3>Why this reason, not an item?</h3>
+      <p>The model flags customer <em>behavior patterns</em> (return velocity, shared addresses, purchase-to-return timing) &mdash; not specific items. The sentence on each card explains which pattern(s) drove that score.</p>
+    </div>
+  </div>
+</section>
+
+<main class="ledger">
+  <section class="ledger__list">
+    {% for c in clusters %}
+    <article class="case" data-cluster-id="{{ c.cluster_id }}">
+      <div class="case__tag">
+        <span class="case__tag-label">CLUSTER</span>
+        {{ '%03d' % c.cluster_id }}
+      </div>
+      <div class="case__body">
+        <div class="case__row">
+          <span class="badge badge--{{ c.risk_tier | lower }}">{{ c.risk_tier }} risk</span>
+          <span class="case__score" title="Risk score, 0-1 scale">score {{ '%.3f' % c.cluster_risk_score }}</span>
+          <span class="case__size">{{ c.cluster_size }} account{{ 's' if c.cluster_size != 1 else '' }} in this cluster</span>
+        </div>
+        <p class="case__reason">{{ c.reason }}</p>
+        <div class="case__members">
+          <span class="case__members-label">Customer ID{{ 's' if c.member_customer_ids|length != 1 else '' }}:</span>
+          {% for m in c.member_customer_ids[:8] %}<code>{{ m }}</code>{% endfor %}
+          {% if c.member_customer_ids|length > 8 %}<span class="more">+{{ c.member_customer_ids|length - 8 }} more</span>{% endif %}
+        </div>
+        <button class="case__expand" onclick="toggleGraph({{ c.cluster_id }})">View relationship graph &rarr;</button>
+        <p class="case__graph-hint">Shows how these account(s) connect to shared addresses, payment methods, and purchased items.</p>
+        <div class="case__graph" id="graph-{{ c.cluster_id }}"></div>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+
+  <aside class="ledger__report">
+    {% if metrics.mode == "supervised" %}
+      <h2>Model vs. Baseline</h2>
+      <p class="report__note">Measured against known fraud labels held out from training.</p>
+      <table class="metrics-table">
+        <thead><tr><th>Metric</th><th>Baseline</th><th>Graph Model</th></tr></thead>
+        <tbody>
+          <tr><td>Precision</td><td>{{ '%.1f%%' % (metrics.baseline.precision * 100) }}</td><td>{{ '%.1f%%' % (metrics.graph.precision * 100) }}</td></tr>
+          <tr><td>Recall</td><td>{{ '%.1f%%' % (metrics.baseline.recall * 100) }}</td><td>{{ '%.1f%%' % (metrics.graph.recall * 100) }}</td></tr>
+          <tr><td>False Positive Rate</td><td>{{ '%.1f%%' % (metrics.baseline.false_positive_rate * 100) }}</td><td>{{ '%.1f%%' % (metrics.graph.false_positive_rate * 100) }}</td></tr>
+          <tr><td>Flagged</td><td>{{ metrics.baseline.n_flagged }}</td><td>{{ metrics.graph.n_flagged }}</td></tr>
+        </tbody>
+      </table>
+      <dl class="glossary">
+        <dt>Precision</dt><dd>Of the accounts flagged, what % were actually fraud.</dd>
+        <dt>Recall</dt><dd>Of all actual fraud accounts, what % did the model catch.</dd>
+        <dt>False Positive Rate</dt><dd>Of legitimate accounts, what % were wrongly flagged.</dd>
+      </dl>
+    {% elif metrics.mode == "unsupervised" %}
+      <h2>Risk Score Summary</h2>
+      <p class="report__note">No fraud labels were available for this dataset, so precision/recall can't be shown &mdash; these are risk-tier counts, not accuracy.</p>
+      <table class="metrics-table">
+        <thead><tr><th>Risk Tier</th><th>Customers</th></tr></thead>
+        <tbody>
+          <tr><td><span class="dot dot--high"></span> High</td><td>{{ metrics.high }}</td></tr>
+          <tr><td><span class="dot dot--medium"></span> Medium</td><td>{{ metrics.medium }}</td></tr>
+          <tr><td><span class="dot dot--low"></span> Low</td><td>{{ metrics.low }}</td></tr>
+        </tbody>
+      </table>
+      <p class="report__note">{{ metrics.n_customers }} customers screened across {{ metrics.n_clusters }} clusters.</p>
+    {% else %}
+      <h2>Metrics vs. Baseline</h2>
+      <p class="report__note">Run <code>python run_pipeline.py</code> to generate metrics.</p>
+    {% endif %}
+  </aside>
+</main>
+
+<script>
+async function toggleGraph(clusterId) {
+  const el = document.getElementById(`graph-${clusterId}`);
+  if (el.classList.contains('open')) {
+    el.classList.remove('open');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.add('open');
+  el.innerHTML = '<div class="loading">Loading relationship graph&hellip;</div>';
+  const resp = await fetch(`/api/cluster/${clusterId}/graph`);
+  const html = await resp.text();
+  const iframe = document.createElement('iframe');
+  iframe.srcdoc = html;
+  iframe.style.width = '100%';
+  iframe.style.height = '520px';
+  iframe.style.border = 'none';
+  el.innerHTML = '';
+  el.appendChild(iframe);
+}
+</script>
+</body>
+</html>

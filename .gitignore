@@ -1,0 +1,23 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# node (dashboard stretch goal / d3 assets if added later)
+node_modules/
+
+# project artifacts
+*.gpickle
+data/*.csv
+data/*.json
+!data/.gitkeep
+!data/sample_real_data_template.csv
+output/
+*.log
+
+# os
+.DS_Store

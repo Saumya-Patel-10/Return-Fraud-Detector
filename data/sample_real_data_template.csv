@@ -1,0 +1,4 @@
+customer_id,item_id,category,order_value,purchase_date,address_raw,payment_fingerprint,returned,size,return_date,return_reason,days_to_return
+CUST-001,SKU-4471,Electronics,129.99,2025-03-01T10:15:00,"742 Evergreen Terrace, Springfield, IL 62704",VISA-4471,True,,2025-03-04T09:00:00,Changed my mind,3
+CUST-001,SKU-9981,Home & Kitchen,45.50,2025-03-10T14:02:00,"742 Evergreen Terrace, Springfield, IL 62704",VISA-4471,False,,,,
+CUST-002,SKU-1120,Formalwear,89.00,2025-03-02T09:30:00,"1600 Amphitheatre Pkwy, Mountain View, CA 94043",MC-8890,True,M,2025-03-03T11:00:00,Wrong size,1
