@@ -53,28 +53,28 @@ SIZES = ["S", "M", "L"]
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 
-def _rng(seed: int) -> np.random.Generator:
+def _rng(seed: int) -> None:
     random.seed(seed)
-    return np.random.default_rng(seed)
+    np.random.seed(seed)
 
 
-def _fake_address(rng: np.random.Generator, i: int) -> str:
-    street_num = rng.integers(1, 9999)
+def _fake_address(i: int) -> str:
+    street_num = np.random.randint(1, 9999)
     streets = ["Main St", "Oak Ave", "Elm St", "Park Rd", "Cedar Ln",
                "Maple Dr", "Sunset Blvd", "2nd St", "Highland Ave", "River Rd"]
     cities = [("Dallas", "TX"), ("Austin", "TX"), ("Denver", "CO"),
               ("Seattle", "WA"), ("Phoenix", "AZ"), ("Atlanta", "GA"),
               ("Columbus", "OH"), ("Miami", "FL")]
-    street = rng.choice(streets)
-    city, state = cities[rng.integers(0, len(cities))]
-    zip_code = 10000 + rng.integers(0, 89999)
+    street = np.random.choice(streets)
+    city, state = cities[np.random.randint(0, len(cities))]
+    zip_code = 10000 + np.random.randint(0, 89999)
     return f"{street_num} {street}, {city}, {state} {zip_code}"
 
 
-def _fake_payment_fp(rng: np.random.Generator) -> str:
+def _fake_payment_fp() -> str:
     card_types = ["VISA", "MC", "AMEX", "DISC"]
-    last4 = rng.integers(1000, 9999)
-    return f"{rng.choice(card_types)}-{last4}"
+    last4 = np.random.randint(1000, 9999)
+    return f"{np.random.choice(card_types)}-{last4}"
 
 
 def load_kaggle_base(csv_path: str) -> pd.DataFrame:
@@ -100,31 +100,30 @@ def load_kaggle_base(csv_path: str) -> pd.DataFrame:
 
 
 def generate_base_population(n_customers: int, n_transactions: int,
-                              start_date: datetime, days_span: int,
-                              rng: np.random.Generator) -> pd.DataFrame:
+                              start_date: datetime, days_span: int) -> pd.DataFrame:
     """Section 5.1: realistic legitimate purchase behavior."""
     customer_ids = [f"C{100000 + i}" for i in range(n_customers)]
-    addresses = {cid: _fake_address(rng, i) for i, cid in enumerate(customer_ids)}
-    payments = {cid: _fake_payment_fp(rng) for cid in customer_ids}
+    addresses = {cid: _fake_address(i) for i, cid in enumerate(customer_ids)}
+    payments = {cid: _fake_payment_fp() for cid in customer_ids}
 
     rows = []
     for t in range(n_transactions):
-        cid = rng.choice(customer_ids)
-        category = rng.choice(CATEGORIES)
-        item_id = f"ITEM-{category[:3].upper()}-{rng.integers(1, 500)}"
-        order_value = round(float(rng.gamma(3.0, 25.0)), 2)
-        purchase_offset = int(rng.integers(0, days_span))
+        cid = np.random.choice(customer_ids)
+        category = np.random.choice(CATEGORIES)
+        item_id = f"ITEM-{category[:3].upper()}-{np.random.randint(1, 500)}"
+        order_value = round(float(np.random.gamma(3.0, 25.0)), 2)
+        purchase_offset = int(np.random.randint(0, days_span))
         purchase_date = start_date + timedelta(days=purchase_offset,
-                                                hours=int(rng.integers(0, 24)))
+                                                hours=int(np.random.randint(0, 24)))
 
         # Baseline natural return behavior (~12-18% of orders returned,
         # for ordinary reasons, with a delay spread over a couple weeks).
-        returned = rng.random() < rng.uniform(0.12, 0.18)
+        returned = np.random.random() < np.random.uniform(0.12, 0.18)
         return_date, return_reason, days_to_return = None, None, None
         if returned:
-            delay = int(rng.integers(2, 21))
+            delay = int(np.random.randint(2, 21))
             return_date = purchase_date + timedelta(days=delay)
-            return_reason = rng.choice(RETURN_REASONS)
+            return_reason = np.random.choice(RETURN_REASONS)
             days_to_return = delay
 
         rows.append(dict(
@@ -149,7 +148,7 @@ def generate_base_population(n_customers: int, n_transactions: int,
     return df
 
 
-def inject_noise_floor(df: pd.DataFrame, rng: np.random.Generator,
+def inject_noise_floor(df: pd.DataFrame,
                         n_noisy_customers: int) -> pd.DataFrame:
     """
     Some legitimate customers get elevated-but-innocent return rates
@@ -158,41 +157,41 @@ def inject_noise_floor(df: pd.DataFrame, rng: np.random.Generator,
     the model has to discriminate rather than just threshold on volume.
     """
     customers = df["customer_id"].unique()
-    noisy = rng.choice(customers, size=min(n_noisy_customers, len(customers)),
+    noisy = np.random.choice(customers, size=min(n_noisy_customers, len(customers)),
                         replace=False)
     mask = df["customer_id"].isin(noisy)
-    idx = df[mask].sample(frac=0.5, random_state=int(rng.integers(0, 1e6))).index
+    idx = df[mask].sample(frac=0.5, random_state=int(np.random.randint(0, 1e6))).index
     df.loc[idx, "returned"] = True
     df.loc[idx, "return_reason"] = "Wrong size"
     for i in idx:
         pdate = datetime.fromisoformat(df.loc[i, "purchase_date"])
-        delay = int(rng.integers(3, 18))
+        delay = int(np.random.randint(3, 18))
         df.loc[i, "return_date"] = (pdate + timedelta(days=delay)).isoformat()
         df.loc[i, "days_to_return"] = delay
     return df
 
 
-def inject_address_rings(df: pd.DataFrame, rng: np.random.Generator,
+def inject_address_rings(df: pd.DataFrame,
                           n_rings: int, addresses: dict) -> tuple[pd.DataFrame, set]:
     """Section 5.2: duplicate an address across 3-6 distinct customer_ids."""
     all_customers = list(addresses.keys())
     fraud_customers: set[str] = set()
     for r in range(n_rings):
-        ring_size = int(rng.integers(3, 7))
-        ring_members = rng.choice(all_customers, size=ring_size, replace=False)
-        shared_address = _fake_address(rng, 90000 + r)
+        ring_size = int(np.random.randint(3, 7))
+        ring_members = np.random.choice(all_customers, size=ring_size, replace=False)
+        shared_address = _fake_address(90000 + r)
         for i, cid in enumerate(ring_members):
             # occasionally introduce a harmless string variant
             # ("St" vs "Street") to make normalization matter.
             addr = shared_address
-            if rng.random() < 0.3:
+            if np.random.random() < 0.3:
                 addr = addr.replace(" St,", " Street,").replace(" Ave,", " Avenue,")
             df.loc[df["customer_id"] == cid, "address_raw"] = addr
             fraud_customers.add(cid)
     return df, fraud_customers
 
 
-def inject_bracketing(df: pd.DataFrame, rng: np.random.Generator,
+def inject_bracketing(df: pd.DataFrame,
                        customers: list, start_date: datetime,
                        days_span: int) -> pd.DataFrame:
     """
@@ -201,17 +200,17 @@ def inject_bracketing(df: pd.DataFrame, rng: np.random.Generator,
     new_rows = []
     t_counter = 900000
     for cid in customers:
-        item_id = f"ITEM-BRK-{rng.integers(1, 200)}"
+        item_id = f"ITEM-BRK-{np.random.randint(1, 200)}"
         category = "Formalwear"
-        purchase_offset = int(rng.integers(0, days_span))
+        purchase_offset = int(np.random.randint(0, days_span))
         purchase_date = start_date + timedelta(days=purchase_offset)
-        keep_size = rng.choice(SIZES)
+        keep_size = np.random.choice(SIZES)
         for size in SIZES:
             is_kept = size == keep_size
             returned = not is_kept
             return_date, return_reason, days_to_return = None, None, None
             if returned:
-                delay = int(rng.integers(1, 5))
+                delay = int(np.random.randint(1, 5))
                 return_date = purchase_date + timedelta(days=delay)
                 return_reason = "Wrong size"
                 days_to_return = delay
@@ -221,7 +220,7 @@ def inject_bracketing(df: pd.DataFrame, rng: np.random.Generator,
                 item_id=item_id,
                 category=category,
                 size=size,
-                order_value=round(float(rng.gamma(3.0, 30.0)), 2),
+                order_value=round(float(np.random.gamma(3.0, 30.0)), 2),
                 purchase_date=purchase_date.isoformat(),
                 address_raw=df.loc[df["customer_id"] == cid, "address_raw"].iloc[0],
                 payment_fingerprint=df.loc[df["customer_id"] == cid, "payment_fingerprint"].iloc[0],
@@ -234,7 +233,7 @@ def inject_bracketing(df: pd.DataFrame, rng: np.random.Generator,
     return pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
 
-def inject_wardrobing(df: pd.DataFrame, rng: np.random.Generator,
+def inject_wardrobing(df: pd.DataFrame,
                        customers: list, start_date: datetime,
                        days_span: int) -> pd.DataFrame:
     """
@@ -245,20 +244,20 @@ def inject_wardrobing(df: pd.DataFrame, rng: np.random.Generator,
     t_counter = 950000
     wardrobe_categories = ["Formalwear", "Electronics"]
     for cid in customers:
-        n_events = int(rng.integers(2, 5))
+        n_events = int(np.random.randint(2, 5))
         for _ in range(n_events):
-            category = rng.choice(wardrobe_categories)
-            purchase_offset = int(rng.integers(0, days_span))
+            category = np.random.choice(wardrobe_categories)
+            purchase_offset = int(np.random.randint(0, days_span))
             purchase_date = start_date + timedelta(days=purchase_offset)
-            delay = int(rng.integers(1, 3))  # very short window
+            delay = int(np.random.randint(1, 3))  # very short window
             return_date = purchase_date + timedelta(days=delay)
             new_rows.append(dict(
                 transaction_id=f"T{t_counter:07d}",
                 customer_id=cid,
-                item_id=f"ITEM-{category[:3].upper()}-{rng.integers(1, 500)}",
+                item_id=f"ITEM-{category[:3].upper()}-{np.random.randint(1, 500)}",
                 category=category,
-                size=rng.choice(SIZES) if category == "Formalwear" else None,
-                order_value=round(float(rng.gamma(4.0, 40.0)), 2),
+                size=np.random.choice(SIZES) if category == "Formalwear" else None,
+                order_value=round(float(np.random.gamma(4.0, 40.0)), 2),
                 purchase_date=purchase_date.isoformat(),
                 address_raw=df.loc[df["customer_id"] == cid, "address_raw"].iloc[0],
                 payment_fingerprint=df.loc[df["customer_id"] == cid, "payment_fingerprint"].iloc[0],
@@ -271,33 +270,33 @@ def inject_wardrobing(df: pd.DataFrame, rng: np.random.Generator,
     return pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
 
-def inject_return_velocity(df: pd.DataFrame, rng: np.random.Generator,
+def inject_return_velocity(df: pd.DataFrame,
                             customers: list, start_date: datetime,
                             days_span: int) -> pd.DataFrame:
     """Customers with return rates far above the dataset's natural distribution."""
     new_rows = []
     t_counter = 970000
     for cid in customers:
-        n_extra = int(rng.integers(8, 15))
+        n_extra = int(np.random.randint(8, 15))
         for _ in range(n_extra):
-            category = rng.choice(CATEGORIES)
-            purchase_offset = int(rng.integers(0, days_span))
+            category = np.random.choice(CATEGORIES)
+            purchase_offset = int(np.random.randint(0, days_span))
             purchase_date = start_date + timedelta(days=purchase_offset)
-            delay = int(rng.integers(1, 10))
+            delay = int(np.random.randint(1, 10))
             return_date = purchase_date + timedelta(days=delay)
             new_rows.append(dict(
                 transaction_id=f"T{t_counter:07d}",
                 customer_id=cid,
-                item_id=f"ITEM-{category[:3].upper()}-{rng.integers(1, 500)}",
+                item_id=f"ITEM-{category[:3].upper()}-{np.random.randint(1, 500)}",
                 category=category,
-                size=rng.choice(SIZES) if category in ("Formalwear", "Shoes") else None,
-                order_value=round(float(rng.gamma(2.5, 20.0)), 2),
+                size=np.random.choice(SIZES) if category in ("Formalwear", "Shoes") else None,
+                order_value=round(float(np.random.gamma(2.5, 20.0)), 2),
                 purchase_date=purchase_date.isoformat(),
                 address_raw=df.loc[df["customer_id"] == cid, "address_raw"].iloc[0],
                 payment_fingerprint=df.loc[df["customer_id"] == cid, "payment_fingerprint"].iloc[0],
                 returned=True,
                 return_date=return_date.isoformat(),
-                return_reason=rng.choice(RETURN_REASONS),
+                return_reason=np.random.choice(RETURN_REASONS),
                 days_to_return=delay,
             ))
             t_counter += 1
@@ -307,25 +306,25 @@ def inject_return_velocity(df: pd.DataFrame, rng: np.random.Generator,
 def run(n_customers=800, n_transactions=12000, n_rings=10,
         n_bracketing=25, n_wardrobing=20, n_velocity=15,
         n_noisy=40, seed=42, out_dir=DATA_DIR):
-    rng = _rng(seed)
+    _rng(seed)
     start_date = datetime(2024, 1, 1)
     days_span = 270
 
     df = generate_base_population(n_customers, n_transactions, start_date,
-                                   days_span, rng)
+                                   days_span)
     addresses = df.attrs["addresses"]
     all_customers = list(addresses.keys())
 
-    df = inject_noise_floor(df, rng, n_noisy)
+    df = inject_noise_floor(df, n_noisy)
 
-    df, ring_fraud = inject_address_rings(df, rng, n_rings, addresses)
+    df, ring_fraud = inject_address_rings(df, n_rings, addresses)
 
     remaining = [c for c in all_customers if c not in ring_fraud]
-    bracket_customers = list(rng.choice(remaining, size=n_bracketing, replace=False))
+    bracket_customers = list(np.random.choice(remaining, size=n_bracketing, replace=False))
     remaining = [c for c in remaining if c not in bracket_customers]
-    wardrobe_customers = list(rng.choice(remaining, size=n_wardrobing, replace=False))
+    wardrobe_customers = list(np.random.choice(remaining, size=n_wardrobing, replace=False))
     remaining = [c for c in remaining if c not in wardrobe_customers]
-    velocity_customers = list(rng.choice(remaining, size=n_velocity, replace=False))
+    velocity_customers = list(np.random.choice(remaining, size=n_velocity, replace=False))
 
     # Give roughly half of the address-ring members bracketing/wardrobing
     # behavior too (coordinated rings), so shared-address alone isn't the
@@ -333,10 +332,10 @@ def run(n_customers=800, n_transactions=12000, n_rings=10,
     ring_list = list(ring_fraud)
     ring_bracketers = ring_list[: max(1, len(ring_list) // 2)]
 
-    df = inject_bracketing(df, rng, bracket_customers + ring_bracketers,
+    df = inject_bracketing(df, bracket_customers + ring_bracketers,
                             start_date, days_span)
-    df = inject_wardrobing(df, rng, wardrobe_customers, start_date, days_span)
-    df = inject_return_velocity(df, rng, velocity_customers, start_date, days_span)
+    df = inject_wardrobing(df, wardrobe_customers, start_date, days_span)
+    df = inject_return_velocity(df, velocity_customers, start_date, days_span)
 
     fraud_customers = set(ring_fraud) | set(bracket_customers) | \
         set(wardrobe_customers) | set(velocity_customers)
